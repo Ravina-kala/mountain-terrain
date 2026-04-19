@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>K2 — 3D Terrain</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;600&family=JetBrains+Mono:wght@300;400&display=swap');
+  :root {
+    --bg:    #0b0a08; --panel: rgba(14,13,10,0.96);
+    --border:rgba(140,120,80,0.35); --text:rgb(210,198,170);
+    --muted: rgba(170,155,120,0.6); --accent:rgb(200,165,80); --gold:rgb(220,185,90);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text);
+          font-family:'Cormorant Garamond',serif; overflow:hidden; height:100vh; }
+  #main { width:100vw; height:100vh; }
+  #loader {
+    position:fixed; inset:0; background:var(--bg);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    z-index:100; transition:opacity 0.8s;
+  }
+  #loader.hidden { opacity:0; pointer-events:none; }
+  #loader h1 { font-size:2.4rem; font-weight:300; letter-spacing:0.12em;
+                color:var(--accent); margin-bottom:8px; }
+  #loader p  { font-size:0.85rem; color:var(--muted); letter-spacing:0.06em; }
+  #progress-bar { width:240px; height:2px; background:rgba(140,120,80,0.2);
+                   margin-top:28px; border-radius:1px; overflow:hidden; }
+  #progress-fill { height:100%; width:0%; background:var(--accent);
+                    transition:width 0.3s ease; border-radius:1px; }
+  #progress-label { font-family:'JetBrains Mono',monospace; font-size:0.72rem;
+                     color:var(--muted); margin-top:10px; letter-spacing:0.04em; }
+  #controls {
+    position:absolute; top:0; left:0; right:0; z-index:10;
+    padding:10px 14px 0;
+    background:linear-gradient(180deg,rgba(11,10,8,0.98) 60%,transparent);
+    display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;
+    pointer-events:none;
+  }
+  .ctrl { pointer-events:all; }
+  .ctrl-label { font-family:'JetBrains Mono',monospace; font-size:8px;
+                 color:var(--muted); letter-spacing:0.10em; text-transform:uppercase;
+                 margin-bottom:4px; padding-left:2px; }
+  select { background:var(--panel); border:1px solid var(--border);
+            color:var(--text); font-family:'Cormorant Garamond',serif;
+            font-size:12px; padding:5px 26px 5px 9px; border-radius:2px;
+            cursor:pointer; outline:none; appearance:none;
+            background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23a08040'/%3E%3C/svg%3E");
+            background-repeat:no-repeat; background-position:right 8px center;
+            min-width:175px; transition:border-color 0.2s; }
+  select:hover { border-color:rgba(200,165,80,0.6); }
+  #title { position:absolute; top:10px; left:50%; transform:translateX(-50%);
+            text-align:center; pointer-events:none; z-index:9; }
+  #title h1 { font-size:1.25rem; font-weight:400; letter-spacing:0.08em;
+               color:var(--accent); text-shadow:0 1px 12px rgba(0,0,0,0.9); }
+  #title p  { font-size:0.68rem; color:var(--muted); margin-top:2px;
+               font-family:'JetBrains Mono',monospace; letter-spacing:0.04em; }
+  #status { position:absolute; bottom:58px; left:50%; transform:translateX(-50%);
+             background:var(--panel); border:1px solid var(--border);
+             padding:5px 18px; border-radius:2px;
+             font-family:'JetBrains Mono',monospace; font-size:10px;
+             color:var(--accent); pointer-events:none; z-index:10;
+             opacity:0; transition:opacity 0.3s; white-space:nowrap; }
+  #status.show { opacity:1; }
+  #colorbar { position:absolute; right:16px; top:50%; transform:translateY(-50%);
+               width:20px; height:240px; z-index:10;
+               border:1px solid var(--border); border-radius:2px;
+               display:none; flex-direction:column; }
+  #colorbar canvas { width:20px; height:220px; border-radius:2px; }
+  #cb-title { position:absolute; right:32px; top:50%; transform:translateY(-50%);
+               font-family:'JetBrains Mono',monospace; font-size:8px;
+               color:var(--muted); writing-mode:vertical-rl;
+               letter-spacing:0.08em; text-transform:uppercase; }
+  #cb-max { position:absolute; right:32px; top:-2px;
+             font-family:'JetBrains Mono',monospace; font-size:8px; color:var(--muted); }
+  #cb-min { position:absolute; right:32px; bottom:-2px;
+             font-family:'JetBrains Mono',monospace; font-size:8px; color:var(--muted); }
+  #slider-wrap { position:absolute; bottom:14px; left:50%; transform:translateX(-50%);
+                  display:flex; align-items:center; gap:12px; z-index:10;
+                  background:var(--panel); padding:6px 16px;
+                  border:1px solid var(--border); border-radius:2px; }
+  #slider-wrap label { font-family:'JetBrains Mono',monospace; font-size:9px;
+                        color:var(--muted); letter-spacing:0.06em; text-transform:uppercase; }
+  #zslider { -webkit-appearance:none; width:220px; height:2px;
+              background:rgba(140,120,80,0.4); border-radius:1px; outline:none; }
+  #zslider::-webkit-slider-thumb { -webkit-appearance:none; width:13px; height:13px;
+    border-radius:50%; background:var(--gold); cursor:pointer;
+    border:1px solid rgba(255,230,150,0.4); }
+  #zval { font-family:'JetBrains Mono',monospace; font-size:10px;
+           color:var(--gold); min-width:32px; }
+</style>
+</head>
+<body>
+<div id="loader">
+  <h1>K2</h1>
+  <p>3D Terrain Familiarization</p>
+  <div id="progress-bar"><div id="progress-fill"></div></div>
+  <div id="progress-label">Initializing...</div>
+</div>
+<div id="main"></div>
+<div id="title">
+  <h1>🏔 K2 — 3D Terrain</h1>
+  <p id="subtitle">Loading...</p>
+</div>
+<div id="controls">
+  <div class="ctrl"><div class="ctrl-label">Terrain Analysis</div>
+    <select id="sel-terrain" onchange="applyTerrain(this.value)" disabled>
+      <option value="natural">🗺️ Natural</option>
+      <option value="slope">📐 Slope Angle</option>
+      <option value="aspect">🧭 Aspect</option>
+      <option value="curvature">🏔️ Curvature</option>
+      <option value="tri">🪨 Ruggedness</option>
+      <option value="wind">🌬️ Wind Exposure</option>
+      <option value="solar">☀️ Solar Exposure</option>
+      <option value="snow">❄️ Snow / Glaciated</option>
+    </select></div>
+  <div class="ctrl"><div class="ctrl-label">Hazard Layer</div>
+    <select id="sel-hazard" onchange="applyHazard(this.value)" disabled>
+      <option value="haz_none">✅ No Hazard</option>
+      <option value="haz_avy">🟡 Avalanche Zones</option>
+      <option value="haz_serac">🔵 Serac / Ice Cliffs</option>
+      <option value="haz_death">🔴 Death Zone</option>
+      <option value="haz_rockfall">🟤 Rockfall Corridors</option>
+      <option value="haz_cliff">⬛ Cliff Faces</option>
+      <option value="haz_jet">💠 Wind Exposure</option>
+      <option value="haz_snow">🩵 Glaciated / Snow</option>
+      <option value="haz_all">🟠 All Hazards</option>
+    </select></div>
+  <div class="ctrl"><div class="ctrl-label">Landmarks</div>
+    <select id="sel-landmarks" onchange="applyLandmarks(this.value)" disabled>
+      <option value="all">🗺️ All Landmarks</option>
+      <option value="peaks">⛰️ Peaks Only</option>
+      <option value="villages">🏘️ Villages Only</option>
+      <option value="camps">🏕️ Camps / Huts Only</option>
+      <option value="none">🚫 Hide All</option>
+    </select></div>
+  <div class="ctrl"><div class="ctrl-label">Peak Elevation</div>
+    <select id="sel-elev" onchange="applyPeakFilter(this.value)" disabled>
+      <option value="peaks_all">All elevations</option>
+      <option value="peaks_4k">&gt;4000m</option>
+      <option value="peaks_5k">&gt;5000m</option>
+      <option value="peaks_6k">&gt;6000m</option>
+      <option value="peaks_7k">&gt;7000m</option>
+      <option value="peaks_8k">&gt;8000m</option>
+    </select></div>
+</div>
+<div id="status"></div>
+<div id="colorbar">
+  <canvas id="cb-canvas" width="20" height="220"></canvas>
+  <span id="cb-title"></span><span id="cb-max"></span><span id="cb-min"></span>
+</div>
+<div id="slider-wrap">
+  <label>Z-Exaggeration</label>
+  <input type="range" id="zslider" min="0.25" max="3" step="0.25" value="1"
+         oninput="applyZExag(parseFloat(this.value))" disabled>
+  <span id="zval">1.00×</span>
+</div>
+<script>
+const DATA_URL  = './data/';
+const PEAK_NAME = "K2";
+const PEAK_ALT  = 8568.8;
+const PEAK_LON  = 76.512361;
+const PEAK_LAT  = 35.880972;
+const ROWS      = 800;
+const COLS      = 800;
+const ASPECT_Z  = 0.182;
+const WIND_DIR  = 270;
+
+function setProgress(pct, label) {
+  if (pct !== null) document.getElementById('progress-fill').style.width = pct + '%';
+  document.getElementById('progress-label').textContent = label;
+}
+
+async function fetchBin(name) {
+  const resp = await fetch(DATA_URL + name + '.bin');
+  if (!resp.ok) throw new Error('Failed: ' + name);
+  return new Float32Array(await resp.arrayBuffer());
+}
+
+function toRows(flat, rows, cols) {
+  const out = new Array(rows);
+  for (let r = 0; r < rows; r++)
+    out[r] = Array.from(flat.subarray(r * cols, (r+1) * cols));
+  return out;
+}
+
+let META = null;
+async function loadMeta() {
+  META = await (await fetch(DATA_URL + 'meta.json')).json();
+}
+
+const _cache = {};
+async function getLayer(name) {
+  if (_cache[name]) return _cache[name];
+  const flat = await fetchBin(name);
+  if (name === 'terrain') {
+    const n = ROWS * COLS;
+    _cache[name] = {
+      X: toRows(flat.subarray(0, n),     ROWS, COLS),
+      Y: toRows(flat.subarray(n, 2*n),   ROWS, COLS),
+      Z: toRows(flat.subarray(2*n, 3*n), ROWS, COLS),
+    };
+  } else {
+    _cache[name] = toRows(flat, ROWS, COLS);
+  }
+  return _cache[name];
+}
+
+function normalizeZ(Z) {
+  let mn=Infinity, mx=-Infinity;
+  for (const row of Z) for (const v of row) { if(v<mn)mn=v; if(v>mx)mx=v; }
+  const rng = mx-mn||1;
+  return Z.map(row => row.map(v => (v-mn)/rng));
+}
+
+let _stTimer;
+function showStatus(msg) {
+  const el = document.getElementById('status');
+  el.textContent=msg; el.classList.add('show');
+  clearTimeout(_stTimer);
+  _stTimer = setTimeout(()=>el.classList.remove('show'), 2000);
+}
+
+function drawColorbar(cs, title, lo, hi) {
+  const wrap = document.getElementById('colorbar');
+  if (!cs || !Array.isArray(cs)) { wrap.style.display='none'; return; }
+  const canvas = document.getElementById('cb-canvas');
+  const ctx = canvas.getContext('2d',{willReadFrequently:true});
+  const H = canvas.height;
+  const stops = cs.map(([v,c])=>({v,c}));
+  for (let y=0; y<H; y++) {
+    const t=1-y/H;
+    let a=stops[0], b=stops[stops.length-1];
+    for (let i=0;i<stops.length-1;i++)
+      if(t>=stops[i].v&&t<=stops[i+1].v){a=stops[i];b=stops[i+1];break;}
+    const f=(b.v-a.v)<1e-9?0:(t-a.v)/(b.v-a.v);
+    const p=s=>s.match(/\d+/g).map(Number);
+    const[r1,g1,b1]=p(a.c),[r2,g2,b2]=p(b.c);
+    ctx.fillStyle=`rgb(${Math.round(r1+f*(r2-r1))},${Math.round(g1+f*(g2-g1))},${Math.round(b1+f*(b2-b1))})`;
+    ctx.fillRect(0,y,20,1);
+  }
+  document.getElementById('cb-title').textContent=title||'';
+  document.getElementById('cb-max').textContent=hi||'High';
+  document.getElementById('cb-min').textContent=lo||'Low';
+  wrap.style.display='flex';
+}
+
+let _curTerrain='natural', _curHazard='haz_none', _curZExag=1.0, _zNorm=null;
+
+async function applyTerrain(tid) {
+  _curTerrain=tid; showStatus('Loading...');
+  if (tid==='natural') {
+    Plotly.restyle('main',{surfacecolor:[_zNorm],colorscale:[META.colorscales.natural]},[0]);
+    document.getElementById('colorbar').style.display='none';
+    showStatus('Natural terrain'); return;
+  }
+  const sc=await getLayer(tid), cs=META.colorscales[tid];
+  if (_curHazard==='haz_none') {
+    Plotly.restyle('main',{surfacecolor:[sc],colorscale:[cs]},[0]);
+    drawColorbar(cs,tid,'Low','High');
+  } else { await applyHazard(_curHazard); }
+  showStatus(tid);
+}
+
+async function applyHazard(hid) {
+  _curHazard=hid; showStatus('Loading hazard...');
+  if (hid==='haz_none') { await applyTerrain(_curTerrain); return; }
+  const sc=await getLayer(hid), cs=META.colorscales[hid];
+  Plotly.restyle('main',{surfacecolor:[sc],colorscale:[cs]},[0]);
+  drawColorbar(Array.isArray(cs)?cs:null,'Hazard','','');
+  showStatus(hid);
+}
+
+function applyZExag(zx) {
+  _curZExag=zx;
+  document.getElementById('zval').textContent=zx.toFixed(2)+'×';
+  const terr=_cache['terrain']; if(!terr)return;
+  Plotly.restyle('main',{z:[terr.Z.map(row=>row.map(v=>v*zx))]},[0]);
+  [1,2,3,4].forEach(ti=>{
+    const t=window._pd&&window._pd[ti];
+    if(t&&t.z_orig) Plotly.restyle('main',{z:[t.z_orig.map(v=>v*zx)]},[ti]);
+  });
+}
+
+function applyLandmarks(val) {
+  Plotly.restyle('main',{visible:[val==='all'||val==='peaks']},[1]);
+  Plotly.restyle('main',{visible:[val==='all'||val==='villages']},[2]);
+  Plotly.restyle('main',{visible:[val==='all'||val==='camps']},[3]);
+}
+
+function applyPeakFilter(eid) {
+  const band=META.peak_bands[eid]||[], zx=_curZExag;
+  Plotly.restyle('main',{
+    x:[band.map(p=>p.lon)], y:[band.map(p=>p.lat)],
+    z:[band.map(p=>((p.elev||0)+50)*zx)], text:[band.map(p=>p.name)]
+  },[1]);
+  if(window._pd&&window._pd[1]) window._pd[1].z_orig=band.map(p=>(p.elev||0)+50);
+}
+
+function makeScatter(pts,color,symbol,name) {
+  const z0=pts.map(p=>(p.elev||0)+50);
+  return {
+    type:'scatter3d',x:pts.map(p=>p.lon),y:pts.map(p=>p.lat),z:z0,z_orig:z0,
+    mode:'markers+text',
+    marker:{size:4,color,symbol,line:{color:'rgba(180,170,150,0.4)',width:0.8}},
+    text:pts.map(p=>p.name),textposition:'top center',textfont:{size:7,color},
+    name,hovertemplate:'<b>%{text}</b><br>%{z:.0f}m<extra></extra>',
+  };
+}
+
+async function init() {
+  try {
+    setProgress(10,'Loading metadata...');
+    await loadMeta();
+    setProgress(30,'Decoding terrain...');
+    const terr=await getLayer('terrain');
+    const {X,Y,Z}=terr;
+    _zNorm=normalizeZ(Z);
+    setProgress(65,'Building scene...');
+    const xRng=Math.max(...X[0])-Math.min(...X[0]);
+    const yVals=Y.map(r=>r[0]);
+    const yRng=Math.max(...yVals)-Math.min(...yVals);
+    const cx=Math.max(...X[0])-xRng*0.10;
+    const cy=Math.max(...yVals)-yRng*0.10;
+    const arm=xRng*0.04, cz=PEAK_ALT*1.08;
+    const compass={
+      type:'scatter3d',
+      x:[cx,cx,null,cx+arm,cx-arm,null],y:[cy+arm,cy-arm,null,cy,cy,null],
+      z:[cz,cz,null,cz,cz,null],mode:'lines+text',
+      line:{color:'rgba(200,190,165,0.6)',width:2},
+      text:['N','S',null,'E','W',null],
+      textfont:{color:'rgb(200,190,165)',size:9},
+      textposition:'middle center',name:'Compass',showlegend:false,hoverinfo:'skip',
+    };
+    const summit={
+      type:'scatter3d',x:[PEAK_LON],y:[PEAK_LAT],z:[PEAK_ALT+180],z_orig:[PEAK_ALT+180],
+      mode:'markers+text',
+      marker:{size:12,color:'rgb(220,185,60)',symbol:'diamond',line:{color:'white',width:1.5}},
+      text:['🏔 '+PEAK_NAME.replace(/_/g,' ')],
+      textposition:'top center',textfont:{size:12,color:'rgb(220,185,60)'},
+      name:'🏔 Summit',
+      hovertemplate:`<b>${PEAK_NAME.replace(/_/g,' ')}</b><br>${PEAK_ALT.toFixed(0)}m<extra></extra>`,
+    };
+    const peaks=makeScatter(META.osm_peaks,'white','diamond','⛰️ Peaks');
+    const villages=makeScatter(META.osm_villages,'rgb(220,205,140)','square','🏘️ Villages');
+    const camps=makeScatter(META.osm_camps,'rgb(140,210,200)','cross','🏕️ Camps');
+    peaks.z_orig=peaks.z.slice();
+    villages.z_orig=villages.z.slice();
+    camps.z_orig=camps.z.slice();
+    const terrain={
+      type:'surface',x:X,y:Y,z:Z,
+      surfacecolor:_zNorm,colorscale:META.colorscales.natural,
+      showscale:false,
+      lighting:{ambient:0.6,diffuse:0.85,specular:0.08,roughness:0.9,fresnel:0.05},
+      lightposition:{x:2000,y:5000,z:9000},
+      name:'Terrain',
+      hovertemplate:'Lon:%{x:.4f}°<br>Lat:%{y:.4f}°<br>Elev:%{z:.0f}m<extra></extra>',
+    };
+    const traces=[terrain,peaks,villages,camps,summit,compass];
+    window._pd=traces;
+    const layout={
+      paper_bgcolor:'rgb(11,10,8)',plot_bgcolor:'rgb(11,10,8)',
+      scene:{
+        aspectmode:'manual',
+        aspectratio:{x:2.0,y:1.4,z:ASPECT_Z},
+        camera:{eye:{x:0.0,y:-2.2,z:0.9},center:{x:0,y:0,z:0},up:{x:0,y:0,z:1}},
+        xaxis:{title:'Longitude',showgrid:true,gridcolor:'rgba(140,120,80,0.10)',
+                backgroundcolor:'rgba(14,12,9,0.95)',color:'rgba(150,135,100,0.5)',tickformat:'.3f'},
+        yaxis:{title:'Latitude',showgrid:true,gridcolor:'rgba(140,120,80,0.10)',
+                backgroundcolor:'rgba(14,12,9,0.95)',color:'rgba(150,135,100,0.5)',tickformat:'.3f'},
+        zaxis:{title:'Elevation (m)',showgrid:true,gridcolor:'rgba(140,120,80,0.13)',
+                backgroundcolor:'rgba(18,15,11,0.98)',color:'rgba(150,135,100,0.6)'},
+        bgcolor:'rgba(10,9,7,1)',
+      },
+      legend:{x:0.82,y:0.90,bgcolor:'rgba(11,10,8,0.88)',
+               bordercolor:'rgba(120,105,75,0.3)',font:{color:'rgb(185,172,148)',size:9}},
+      margin:{l:0,r:0,t:0,b:0},
+    };
+    setProgress(85,'Rendering...');
+    await Plotly.newPlot('main',traces,layout,{displayModeBar:true,responsive:true,
+      toImageButtonOptions:{format:'png',filename:PEAK_NAME+'_3d',height:2160,width:3840,scale:2}});
+    setProgress(100,'Ready');
+    ['sel-terrain','sel-hazard','sel-landmarks','sel-elev','zslider']
+      .forEach(id=>document.getElementById(id).disabled=false);
+    document.getElementById('subtitle').textContent=
+      `COP30 · ${ROWS}×${COLS} · ${PEAK_ALT.toFixed(0)}m · Hover for elevation`;
+    setTimeout(()=>document.getElementById('loader').classList.add('hidden'),600);
+    showStatus('Welcome to '+PEAK_NAME.replace(/_/g,' '));
+  } catch(err) { setProgress(100,'Error: '+err.message); console.error(err); }
+}
+window.addEventListener('load',()=>setTimeout(init,80));
+</script>
+</body>
+</html>
