@@ -191,6 +191,10 @@ const COLS      = 800;
 const ASPECT_Z  = 0.2;
 const WIND_DIR  = 270;
 
+const ZOOM_T1   = 3.0;
+const ZOOM_T2   = 1.44;
+const ZOOM_T3   = 0.6;
+
 function setProgress(pct, label) {
   if (pct !== null) document.getElementById('progress-fill').style.width = pct + '%';
   document.getElementById('progress-label').textContent = label;
