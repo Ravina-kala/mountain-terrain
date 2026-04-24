@@ -127,14 +127,38 @@
       <option value="haz_snow">🩵 Glaciated / Snow</option>
       <option value="haz_all">🟠 All Hazards</option>
     </select></div>
-  <div class="ctrl"><div class="ctrl-label">Landmarks</div>
-    <select id="sel-landmarks" onchange="applyLandmarks(this.value)" disabled>
-      <option value="all">🗺️ All Landmarks</option>
-      <option value="peaks">⛰️ Peaks Only</option>
-      <option value="villages">🏘️ Villages Only</option>
-      <option value="camps">🏕️ Camps / Huts Only</option>
-      <option value="none">🚫 Hide All</option>
-    </select></div>
+  <div class="ctrl" id="landmark-ctrl" style="pointer-events:all;">
+    <div class="ctrl-label">Landmarks <span id="zoom-tier-label" style="color:rgb(140,185,140);font-size:8px;"></span></div>
+    <div style="position:relative;min-width:195px;">
+      <div id="ms-header" onclick="toggleMS()"
+           style="background:rgba(14,13,10,0.96);border:1px solid rgba(140,120,80,0.35);
+                  color:rgb(210,198,170);font-size:12px;padding:5px 9px;border-radius:2px;
+                  cursor:pointer;display:flex;justify-content:space-between;align-items:center;">
+        Categories <span id="ms-count" style="font-size:9px;color:rgba(170,155,120,0.6);margin-left:8px;">0 selected</span>
+      </div>
+      <div id="ms-options" style="display:none;position:absolute;top:100%;left:0;z-index:200;
+           background:rgba(18,16,12,0.98);border:1px solid rgba(140,120,80,0.35);
+           border-radius:2px;padding:6px 0;min-width:210px;box-shadow:0 4px 20px rgba(0,0,0,0.7);">
+        <label style="display:flex;align-items:center;gap:8px;padding:4px 12px;cursor:pointer;font-size:11px;color:rgb(200,188,162);">
+          <input type="checkbox" value="settlements"        onchange="updateLandmarkVisibility()"> Settlements</label>
+        <label style="display:flex;align-items:center;gap:8px;padding:4px 12px;cursor:pointer;font-size:11px;color:rgb(200,188,162);">
+          <input type="checkbox" value="peaks_terrain"      onchange="updateLandmarkVisibility()"> Peaks and Terrain</label>
+        <label style="display:flex;align-items:center;gap:8px;padding:4px 12px;cursor:pointer;font-size:11px;color:rgb(200,188,162);">
+          <input type="checkbox" value="camps_shelters"     onchange="updateLandmarkVisibility()"> Camps and Shelters</label>
+        <label style="display:flex;align-items:center;gap:8px;padding:4px 12px;cursor:pointer;font-size:11px;color:rgb(200,188,162);">
+          <input type="checkbox" value="water"              onchange="updateLandmarkVisibility()"> Water Features</label>
+        <label style="display:flex;align-items:center;gap:8px;padding:4px 12px;cursor:pointer;font-size:11px;color:rgb(200,188,162);">
+          <input type="checkbox" value="religious_cultural" onchange="updateLandmarkVisibility()"> Cultural and Religious</label>
+        <label style="display:flex;align-items:center;gap:8px;padding:4px 12px;cursor:pointer;font-size:11px;color:rgb(200,188,162);">
+          <input type="checkbox" value="infrastructure"     onchange="updateLandmarkVisibility()"> Infrastructure</label>
+        <label style="display:flex;align-items:center;gap:8px;padding:4px 12px;cursor:pointer;font-size:11px;color:rgb(200,188,162);">
+          <input type="checkbox" value="tourism_leisure"    onchange="updateLandmarkVisibility()"> Tourism and Viewpoints</label>
+        <hr style="border-color:rgba(120,105,75,0.3);margin:4px 0;">
+        <label style="display:flex;align-items:center;gap:8px;padding:4px 12px;cursor:pointer;font-size:11px;color:rgb(200,188,162);">
+          <input type="checkbox" id="ms-all" onchange="toggleAllCategories(this)"> All / None</label>
+      </div>
+    </div>
+  </div>
   <div class="ctrl"><div class="ctrl-label">Peak Elevation</div>
     <select id="sel-elev" onchange="applyPeakFilter(this.value)" disabled>
       <option value="peaks_all">All elevations</option>
@@ -274,41 +298,164 @@ async function applyHazard(hid) {
 
 function applyZExag(zx) {
   _curZExag=zx;
-  document.getElementById('zval').textContent=zx.toFixed(2)+'×';
+  document.getElementById('zval').textContent=zx.toFixed(2)+'x';
   const terr=_cache['terrain']; if(!terr)return;
   Plotly.restyle('main',{z:[terr.Z.map(row=>row.map(v=>v*zx))]},[0]);
-  [1,2,3,4].forEach(ti=>{
-    const t=window._pd&&window._pd[ti];
-    if(t&&t.z_orig) Plotly.restyle('main',{z:[t.z_orig.map(v=>v*zx)]},[ti]);
+  // Scale summit (1) and all 28 OSM traces (2-29)
+  const CAT_ORDER=['settlements','peaks_terrain','camps_shelters','water',
+                   'religious_cultural','infrastructure','tourism_leisure'];
+  // Summit
+  if(window._scatterZOrig&&window._scatterZOrig['summit'])
+    Plotly.restyle('main',{z:[window._scatterZOrig['summit'].map(v=>v*zx)]},[1]);
+  // OSM traces
+  CAT_ORDER.forEach((cat,ci)=>{
+    for(let tier=1;tier<=4;tier++){
+      const key=cat+'_'+tier;
+      const z0=window._scatterZOrig&&window._scatterZOrig[key];
+      if(z0&&z0.length) Plotly.restyle('main',{z:[z0.map(v=>v*zx)]},[2+ci*4+(tier-1)]);
+    }
   });
 }
 
-function applyLandmarks(val) {
-  Plotly.restyle('main',{visible:[val==='all'||val==='peaks']},[1]);
-  Plotly.restyle('main',{visible:[val==='all'||val==='villages']},[2]);
-  Plotly.restyle('main',{visible:[val==='all'||val==='camps']},[3]);
+// ── Multi-select dropdown ─────────────────────────────────────────
+function toggleMS(){
+  const dd=document.getElementById('ms-options');
+  dd.style.display=dd.style.display==='none'?'block':'none';
+}
+document.addEventListener('click',e=>{
+  const ctrl=document.getElementById('landmark-ctrl');
+  if(ctrl&&!ctrl.contains(e.target))
+    document.getElementById('ms-options').style.display='none';
+});
+function toggleAllCategories(cb){
+  document.querySelectorAll('#ms-options input[type=checkbox]').forEach(c=>{
+    if(c.id!=='ms-all') c.checked=cb.checked;
+  });
+  updateLandmarkVisibility();
+}
+function getEnabledCategories(){
+  const en=new Set();
+  document.querySelectorAll('#ms-options input[type=checkbox]').forEach(c=>{
+    if(c.id!=='ms-all'&&c.checked) en.add(c.value);
+  });
+  document.getElementById('ms-count').textContent=en.size+' selected';
+  return en;
 }
 
-function applyPeakFilter(eid) {
+// ── Zoom tier ─────────────────────────────────────────────────────────
+let _currentEyeZ=0.9, _lastTier=-1, _zoomDebounce;
+function eyeToTier(z){return z>ZOOM_T1?1:z>ZOOM_T2?2:z>ZOOM_T3?3:4;}
+function getCurrentZoomTier(){return eyeToTier(_currentEyeZ);}
+
+function setupZoomHandler(){
+  document.getElementById('main').on('plotly_relayout',function(ed){
+    if(ed['scene.camera']&&ed['scene.camera'].eye)
+      _currentEyeZ=ed['scene.camera'].eye.z??_currentEyeZ;
+    else if(ed['scene.camera.eye.z']!==undefined)
+      _currentEyeZ=ed['scene.camera.eye.z'];
+    clearTimeout(_zoomDebounce);
+    _zoomDebounce=setTimeout(()=>{
+      const t=getCurrentZoomTier();
+      if(t!==_lastTier){_lastTier=t;updateLandmarkVisibility();}
+    },500);
+  });
+}
+
+// ── Landmark visibility — 31 traces, explicit true/false ──────────────
+const CAT_ORDER=['settlements','peaks_terrain','camps_shelters','water',
+                 'religious_cultural','infrastructure','tourism_leisure'];
+function catTraceIdx(cat,tier){return 2+CAT_ORDER.indexOf(cat)*4+(tier-1);}
+
+function updateLandmarkVisibility(){
+  const enabled=getEnabledCategories();
+  const zoomTier=getCurrentZoomTier();
+  const lbl=document.getElementById('zoom-tier-label');
+  if(lbl) lbl.textContent='- '+{1:'Regional',2:'Area',3:'Local',4:'Detail'}[zoomTier];
+  const vis=new Array(31).fill(false);
+  vis[0]=true; vis[1]=true; vis[30]=true;
+  CAT_ORDER.forEach((cat,ci)=>{
+    for(let tier=1;tier<=4;tier++)
+      vis[2+ci*4+(tier-1)]=enabled.has(cat)&&tier<=zoomTier;
+  });
+  Plotly.restyle('main',{visible:vis},Array.from({length:31},(_,i)=>i));
+}
+
+// ── Peak elevation filter (peaks_terrain only) ────────────────────────
+function applyPeakFilter(eid){
   const band=META.peak_bands[eid]||[], zx=_curZExag;
-  Plotly.restyle('main',{
-    x:[band.map(p=>p.lon)], y:[band.map(p=>p.lat)],
-    z:[band.map(p=>((p.elev||0)+50)*zx)], text:[band.map(p=>p.name)]
-  },[1]);
-  if(window._pd&&window._pd[1]) window._pd[1].z_orig=band.map(p=>(p.elev||0)+50);
+  const allPeaks=META.osm_all&&META.osm_all['peaks_terrain']||[];
+  const minElev={peaks_all:0,peaks_4k:4000,peaks_5k:5000,peaks_6k:6000,peaks_7k:7000,peaks_8k:8000}[eid]||0;
+  for(let tier=1;tier<=4;tier++){
+    const idx=catTraceIdx('peaks_terrain',tier);
+    const pts=allPeaks.filter(p=>p.tier===tier&&(p.elev||0)>=minElev);
+    const zOrig=pts.map(p=>(p.elev||0)+50);
+    if(window._scatterZOrig) window._scatterZOrig['peaks_terrain_'+tier]=zOrig;
+    Plotly.restyle('main',{
+      x:[pts.map(p=>p.lon)],y:[pts.map(p=>p.lat)],
+      z:[zOrig.map(v=>v*zx)],text:[pts.map(p=>p.name||'')]
+    },[idx]);
+  }
 }
 
-function makeScatter(pts,color,symbol,name) {
-  const z0=pts.map(p=>(p.elev||0)+50);
-  return {
-    type:'scatter3d',x:pts.map(p=>p.lon),y:pts.map(p=>p.lat),z:z0,z_orig:z0,
-    mode:'markers+text',
-    marker:{size:4,color,symbol,line:{color:'rgba(180,170,150,0.4)',width:0.8}},
-    text:pts.map(p=>p.name),textposition:'top center',textfont:{size:7,color},
-    name,hovertemplate:'<b>%{text}</b><br>%{z:.0f}m<extra></extra>',
+// ── Build 28 OSM scatter traces ───────────────────────────────────────
+window._scatterZOrig={};
+function buildOsmTraces(){
+  const traces=[];
+  const hoverFns={
+    settlements:        p=>'Type: '+(p.type||'-')+'<br>Population: '+(p.population||'-'),
+    peaks_terrain:      p=>'Type: '+(p.type||'-')+'<br>Prominence: '+(p.prominence||'-')+'m',
+    camps_shelters:     p=>'Type: '+(p.type||'-')+'<br>Capacity: '+(p.capacity||'-')+'<br>Operator: '+(p.operator||'-'),
+    water:              p=>'Type: '+(p.type||'-')+'<br>Drinkable: '+(p.drinking_water||'-'),
+    religious_cultural: p=>'Type: '+(p.type||'-')+'<br>Religion: '+(p.religion||'-'),
+    infrastructure:     p=>'Type: '+(p.type||'-')+'<br>Operator: '+(p.operator||'-')+'<br>ICAO: '+(p.icao||'-'),
+    tourism_leisure:    p=>'Type: '+(p.type||'-')+'<br>Stars: '+(p.stars||'-'),
   };
+  const catStyles={
+    settlements:        {symbol:'circle',      color:'rgb(220,205,140)',s12:7,s34:5},
+    peaks_terrain:      {symbol:'diamond',     color:'white',           s12:7,s34:5},
+    camps_shelters:     {symbol:'cross',       color:'rgb(140,210,200)',s12:7,s34:5},
+    water:              {symbol:'circle-open', color:'rgb(100,180,255)',s12:6,s34:4},
+    religious_cultural: {symbol:'square',      color:'rgb(220,180,255)',s12:6,s34:4},
+    infrastructure:     {symbol:'square',      color:'rgb(255,160,100)',s12:6,s34:4},
+    tourism_leisure:    {symbol:'diamond-open',color:'rgb(180,255,140)',s12:6,s34:4},
+  };
+  const catLabels={
+    settlements:'Settlements',peaks_terrain:'Peaks and Terrain',
+    camps_shelters:'Camps and Shelters',water:'Water Features',
+    religious_cultural:'Cultural and Religious',
+    infrastructure:'Infrastructure',tourism_leisure:'Tourism and Viewpoints',
+  };
+  const osmAll=META.osm_all||{};
+  CAT_ORDER.forEach((cat,ci)=>{
+    const style=catStyles[cat]||{};
+    const allFeats=osmAll[cat]||[];
+    for(let tier=1;tier<=4;tier++){
+      const feats=allFeats.filter(f=>f.tier===tier);
+      const zOrig=feats.map(f=>(f.elev||0)+50);
+      window._scatterZOrig[cat+'_'+tier]=zOrig;
+      const fn=hoverFns[cat]||(p=>'Type: '+(p.type||'-'));
+      const htpl=feats.map(f=>
+        '<b>'+(f.name||f.type||'-')+'</b><br>Elevation: '+((f.elev||0).toFixed(0))+'m<br>'+
+        fn(f)+'<br>Lon:'+(f.lon||0).toFixed(4)+'  Lat:'+(f.lat||0).toFixed(4)+'<extra></extra>');
+      traces.push({
+        type:'scatter3d',
+        x:feats.map(f=>f.lon),y:feats.map(f=>f.lat),z:zOrig,
+        mode:tier<=2?'markers+text':'markers',
+        marker:{size:tier<=2?style.s12:style.s34,color:style.color,symbol:style.symbol,
+                line:{color:'rgba(0,0,0,0.25)',width:0.5}},
+        text:feats.map(f=>f.name||''),
+        textposition:'top center',textfont:{size:7,color:style.color},
+        name:(catLabels[cat]||cat)+' T'+tier,
+        visible:false,
+        showlegend:tier===1&&feats.length>0,
+        hovertemplate:htpl.length?htpl:undefined,
+      });
+    }
+  });
+  return traces;
 }
 
+// ── Init ──────────────────────────────────────────────────────────────
 async function init() {
   try {
     setProgress(10,'Loading metadata...');
@@ -317,13 +464,15 @@ async function init() {
     const terr=await getLayer('terrain');
     const {X,Y,Z}=terr;
     _zNorm=normalizeZ(Z);
-    setProgress(65,'Building scene...');
+    setProgress(60,'Building scene...');
+
+    // Compass
     const xRng=Math.max(...X[0])-Math.min(...X[0]);
     const yVals=Y.map(r=>r[0]);
     const yRng=Math.max(...yVals)-Math.min(...yVals);
     const cx=Math.max(...X[0])-xRng*0.10;
     const cy=Math.max(...yVals)-yRng*0.10;
-    const arm=xRng*0.04, cz=PEAK_ALT*1.08;
+    const arm=xRng*0.04,cz=PEAK_ALT*1.08;
     const compass={
       type:'scatter3d',
       x:[cx,cx,null,cx+arm,cx-arm,null],y:[cy+arm,cy-arm,null,cy,cy,null],
@@ -333,21 +482,23 @@ async function init() {
       textfont:{color:'rgb(200,190,165)',size:9},
       textposition:'middle center',name:'Compass',showlegend:false,hoverinfo:'skip',
     };
+
+    // Summit — subtle, small, always visible
+    const sZ=[PEAK_ALT+120];
+    window._scatterZOrig['summit']=sZ;
     const summit={
-      type:'scatter3d',x:[PEAK_LON],y:[PEAK_LAT],z:[PEAK_ALT+180],z_orig:[PEAK_ALT+180],
+      type:'scatter3d',x:[PEAK_LON],y:[PEAK_LAT],z:sZ,
       mode:'markers+text',
-      marker:{size:12,color:'rgb(220,185,60)',symbol:'diamond',line:{color:'white',width:1.5}},
-      text:['🏔 '+PEAK_NAME.replace(/_/g,' ')],
-      textposition:'top center',textfont:{size:12,color:'rgb(220,185,60)'},
-      name:'🏔 Summit',
-      hovertemplate:`<b>${PEAK_NAME.replace(/_/g,' ')}</b><br>${PEAK_ALT.toFixed(0)}m<extra></extra>`,
+      marker:{size:7,color:'rgb(220,185,60)',symbol:'diamond',
+              line:{color:'rgba(255,240,180,0.5)',width:1}},
+      text:['  '+PEAK_NAME.replace(/_/g,' ')],
+      textposition:'middle right',
+      textfont:{size:10,color:'rgb(220,185,60)'},
+      name:'Summit',showlegend:true,visible:true,
+      hovertemplate:'<b>'+PEAK_NAME.replace(/_/g,' ')+'</b><br>'+PEAK_ALT.toFixed(0)+'m<extra></extra>',
     };
-    const peaks=makeScatter(META.osm_peaks,'white','diamond','⛰️ Peaks');
-    const villages=makeScatter(META.osm_villages,'rgb(220,205,140)','square','🏘️ Villages');
-    const camps=makeScatter(META.osm_camps,'rgb(140,210,200)','cross','🏕️ Camps');
-    peaks.z_orig=peaks.z.slice();
-    villages.z_orig=villages.z.slice();
-    camps.z_orig=camps.z.slice();
+
+    // Terrain surface
     const terrain={
       type:'surface',x:X,y:Y,z:Z,
       surfacecolor:_zNorm,colorscale:META.colorscales.natural,
@@ -355,10 +506,16 @@ async function init() {
       lighting:{ambient:0.6,diffuse:0.85,specular:0.08,roughness:0.9,fresnel:0.05},
       lightposition:{x:2000,y:5000,z:9000},
       name:'Terrain',
-      hovertemplate:'Lon:%{x:.4f}°<br>Lat:%{y:.4f}°<br>Elev:%{z:.0f}m<extra></extra>',
+      hovertemplate:'Lon:%{x:.4f}  Lat:%{y:.4f}  Elev:%{z:.0f}m<extra></extra>',
     };
-    const traces=[terrain,peaks,villages,camps,summit,compass];
-    window._pd=traces;
+
+    // 28 OSM traces (all hidden)
+    const osmTraces=buildOsmTraces();
+
+    // Assemble 31 traces
+    const traces=[terrain,summit,...osmTraces,compass];
+    if(traces.length!==31) console.warn('Expected 31 traces, got '+traces.length);
+
     const layout={
       paper_bgcolor:'rgb(11,10,8)',plot_bgcolor:'rgb(11,10,8)',
       scene:{
@@ -377,16 +534,21 @@ async function init() {
                bordercolor:'rgba(120,105,75,0.3)',font:{color:'rgb(185,172,148)',size:9}},
       margin:{l:0,r:0,t:0,b:0},
     };
+
     setProgress(85,'Rendering...');
     await Plotly.newPlot('main',traces,layout,{displayModeBar:true,responsive:true,
       toImageButtonOptions:{format:'png',filename:PEAK_NAME+'_3d',height:2160,width:3840,scale:2}});
+
     setProgress(100,'Ready');
-    ['sel-terrain','sel-hazard','sel-landmarks','sel-elev','zslider']
-      .forEach(id=>document.getElementById(id).disabled=false);
+    ['sel-terrain','sel-hazard','sel-elev','zslider']
+      .forEach(id=>{const el=document.getElementById(id);if(el)el.disabled=false;});
     document.getElementById('subtitle').textContent=
-      `COP30 · ${ROWS}×${COLS} · ${PEAK_ALT.toFixed(0)}m · Hover for elevation`;
+      `COP30 ${ROWS}x${COLS} ${PEAK_ALT.toFixed(0)}m Hover for elevation`;
     setTimeout(()=>document.getElementById('loader').classList.add('hidden'),600);
-    showStatus('Welcome to '+PEAK_NAME.replace(/_/g,' '));
+
+    setupZoomHandler();
+    updateLandmarkVisibility();
+    showStatus(PEAK_NAME.replace(/_/g,' ')+' -- select Landmarks to explore');
   } catch(err) { setProgress(100,'Error: '+err.message); console.error(err); }
 }
 window.addEventListener('load',()=>setTimeout(init,80));
